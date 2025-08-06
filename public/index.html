@@ -1,0 +1,57 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>🎩 Magouille</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🎩 Magouille</h1>
+    <div id="etat" class="status-bar"></div>
+
+    <div class="board">
+      <div class="player-info">
+        <div id="cartes" class="cartes">🃏 Tes cartes :</div>
+        <div id="pieces" class="pieces">💰 Pièces :</div>
+      </div>
+
+      <div class="actions-zone">
+        <h3>🎯 Actions</h3>
+        <div id="actions"></div>
+      </div>
+
+      <div class="votes-zone">
+        <h3>🗳️ Vote</h3>
+        <div id="votes"></div>
+      </div>
+
+      <div class="annonces-zone">
+        <h3>🗣️ Annonces</h3>
+        <div id="annonces"></div>
+      </div>
+
+      <div class="journal-zone">
+        <h3>📜 Journal de partie</h3>
+        <pre id="journal"></pre>
+      </div>
+    </div>
+
+    <div id="table-container">
+      <div id="joueur-top"    class="player-slot"></div>
+      <div id="joueur-right"  class="player-slot"></div>
+      <div id="joueur-bottom" class="player-slot"></div>
+      <div id="joueur-left"   class="player-slot"></div>
+      <div id="table-center">
+        <span id="nb-pioche"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Socket.IO -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Client JS (ESModule) -->
+  <script type="module" src="client.js"></script>
+</body>
+</html>

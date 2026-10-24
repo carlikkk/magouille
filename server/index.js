@@ -153,7 +153,22 @@ class Game {
   }
 
   receiveVote(playerName, vote) {
-    this.votes[playerName] = vote;
+    if (this.phase !== "IN_PROGRESS" || !this.actionInProgress) {
+      return;
+    }
+
+    const player = this.players.find(p => p.name === playerName); 
+
+    if (!player || !player.isAlive) return;
+    if (player === this.actionInProgress.actor) return; 
+    if (vote !== "ok" && vote !== "menteur") return;
+    if (Object.hasOwn(this.votes, playerName)) return;
+
+    this.votes = {
+      ...this.votes,
+      [playerName]: vote
+    }
+
     if (Object.keys(this.votes).length === this.aliveCount() - 1) {
       this.resolveChallenge();
     }
@@ -359,18 +374,23 @@ class Game {
   }
 
   broadcastState() {
-    const state = {
-      players: this.players.map(p => ({
-        name: p.name,
-        coins: p.coins,
-        hand: p.hand.map(c => c.role),
-        revealed: p.revealed,
-        isAlive: p.isAlive
-      })),
-      treasure: this.treasure,
-      deckCount: this.deck.length
-    };
-    this.players.forEach(p => p.socket.emit("stateUpdate", state));
+    this.players.forEach(p => {
+      const state = {
+        players: this.players.map(p => ({
+          name: p.name,
+          coins: p.coins,
+          hand: p.id === recipient.id 
+            ? p.hand.map(c => c.role)
+            : p.hand.map(() => null),
+          revealed: [...p.revealed],
+          isAlive: p.isAlive
+        })),
+        treasure: this.treasure,
+        deckCount: this.deck.length
+      };
+      
+      recipient.socket.emit("stateUpdate", state);
+    });
   }
 }
 
@@ -403,7 +423,6 @@ io.on("connection", socket => {
     if (game.players.length >= MAX_PLAYERS)
       return cb({ ok: false, message: "Partie pleine." });
 
-    game.players.push(new Player(socket, nom));
     if(
       game.players.some(p => p.name === nom)) {
       return cb({ 
@@ -411,6 +430,7 @@ io.on("connection", socket => {
         message: "Ce prénom est déjà utilisé dans cette partie." });
     }
 
+    game.players.push(new Player(socket, nom));
     socket.join(code);
 
     io.to(code).emit("etatSalle", {

@@ -405,10 +405,10 @@ io.on("connection", socket => {
 
     game.players.push(new Player(socket, nom));
     if(
-      game.player.some(p => p.name === nom)) {
+      game.players.some(p => p.name === nom)) {
       return cb({ 
         ok: false, 
-        message: "Nom déjà utilisé." });
+        message: "Ce prénom est déjà utilisé dans cette partie." });
     }
 
     socket.join(code);

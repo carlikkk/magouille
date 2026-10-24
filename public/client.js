@@ -207,7 +207,7 @@ function renderCircle(state) {
     }
     const isMe = p.name === playerName;
     const cardsHTML = p.hand.map(c =>
-      isMe || p.revealed.includes(c)
+      isMe
         ? renderCard(c).outerHTML
         : renderCardBack().outerHTML
     ).join('');

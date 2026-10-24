@@ -244,17 +244,21 @@ class Game {
   }
 
   powerIllusionniste(player) {
+    const claimants = this.players.filter(
+      p => p !== player &&
+           p.isAlive &&
+           this.claimsIllu.includes(p.name)
+    )
+
+    if (claimants.length >= 4) return;
+
     player.coins += 4; 
     this.treasure -= 4;
 
-    const count = this.claimsIllu.length;
-    if (count >= 1 && count <= 3) {
-      this.claimsIllu.forEach(name => {
-        const p = this.players.find(x => x.name === name);
-        player.coins += 1; 
-        p.treasure -= 1;
-      });
-    }
+    claimants.forEach(p => {
+      player.coins -= 1;
+      p.coins += 1;
+    });
   }
 
   powerCroqueMort(player) {
@@ -400,6 +404,13 @@ io.on("connection", socket => {
       return cb({ ok: false, message: "Partie pleine." });
 
     game.players.push(new Player(socket, nom));
+    if(
+      game.player.some(p => p.name === nom)) {
+      return cb({ 
+        ok: false, 
+        message: "Nom déjà utilisé." });
+    }
+
     socket.join(code);
 
     io.to(code).emit("etatSalle", {

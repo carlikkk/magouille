@@ -245,12 +245,15 @@ class Game {
   }
 
   powerIllusionniste(player) {
-    player.coins += 4; this.treasure -= 4;
+    player.coins += 4; 
+    this.treasure -= 4;
+
     const count = this.claimsIllu.length;
     if (count >= 1 && count <= 3) {
       this.claimsIllu.forEach(name => {
         const p = this.players.find(x => x.name === name);
-        p.coins += 1; this.treasure -= 1;
+        player.coins += 1; 
+        p.treasure -= 1;
       });
     }
   }

@@ -178,17 +178,16 @@ class Game {
   }
 
   doRevealCheck(accusers) {
-    const { actor, role, targetName } = this.actionInProgress;
+    const { actor, role } = this.actionInProgress;
     const hasRole = actor.hand.some(c => c.role === role);
 
     if (hasRole) {
-      // bluffeur perd vie
       accusers.forEach(ch => ch.loseLife());
       this.replaceCard(actor, role);
-      this.applyEffect();
-    } else {
-      actor.loseLife();
+      return this.applyEffect();
     }
+
+    actor.loseLife();
     this.cleanupAfterAction();
   }
 
@@ -268,8 +267,9 @@ class Game {
 
   powerPape(player) {
     this.players.forEach(p => {
-      if (p !== player && p.isAlive) {
-        player.coins += 1; p.coins -= 1;
+      if (p !== player && p.isAlive && p.coins > 0) {
+        player.coins += 1; 
+        p.coins -= 1;
       }
     });
   }
@@ -299,13 +299,15 @@ class Game {
   }
 
   replaceCard(player, role) {
-    const idx = player.hand.findIndex(c => c.role === role && !c.isRevealed);
+    const idx = player.hand.findIndex(
+      c => c.role === role && !c.isRevealed
+    );
     if (idx < 0) return;
-    player.hand.splice(idx, 1);
-    const newC = this.deck.pop();
-    player.hand.push(newC);
-    this.deck.push(new Card(role));
+
+    const [provedCard] = player.hand.splice(idx, 1);
+    this.deck.push(provedCard);
     this.shuffleDeck();
+    player.hand.push(this.deck.pop());
   }
 
   cleanupAfterAction() {

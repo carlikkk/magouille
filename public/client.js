@@ -197,24 +197,55 @@ socket.on('gameEnded', winner => {
 
 // 11. RENDU CERCLE DE JOUEURS
 function renderCircle(state) {
-  state.players.forEach((p,i) => {
-    const pos = ['top','right','bottom','left'][i];
-    const slot = tableSlots[pos];
+  ['top', 'right', 'bottom', 'left'].forEach((position, i) => {
+    const slot = tableSlots[position];
     if (!slot) return;
-    if (!p || !p.isAlive) {
-      slot.innerHTML = '<em>Éliminé ou absent</em>';
+
+    slot.replaceChildren();
+
+    const p = state.players[i];
+    if (!p) {
+      slot.textContent = 'Absent';
       return;
     }
+
+    const content = document.createElement('div');
+    content.style.textAlign = 'center';
+
+    const name = document.createElement('strong');
+    name.textContent = `${p.name}${p.isAlive ? '' : ' — Éliminé'}`;
+
+    const coins = document.createElement('div');
+    coins.className = 'pieces';
+    coins.textContent = `💰 ${p.coins}`;
+
+    const cards = document.createElement('div');
+    cards.className = 'cartes';
+    cards.style.display = 'flex';
+    cards.style.justifyContent = 'center';
+
     const isMe = p.name === playerName;
-    const cardsHTML = p.hand.map(c =>
-      isMe
-        ? renderCard(c).outerHTML
-        : renderCardBack().outerHTML
-    ).join('');
-    slot.innerHTML = `
-      <strong>${p.name}</strong><br>
-      <div class="pieces">💰 ${p.coins}</div>
-      <div class="cartes">${cardsHTML}</div>
-    `;
+
+    p.hand.forEach(role => {
+      cards.appendChild(isMe ? renderCard(role) : renderCardBack());
+    });
+
+    p.revealed.forEach(role => {
+      const card = renderCard(role);
+      card.style.opacity = '0.55';
+      card.style.filter = 'grayscale(1)';
+      card.title = `Carte perdue : ${role}`;
+      cards.appendChild(card);
+    });
+
+    content.append(name, coins, cards);
+
+    if (p.revealed.length > 0) {
+      const label = document.createElement('small');
+      label.textContent = 'En grisé : cartes perdues';
+      content.appendChild(label);
+    }
+
+    slot.appendChild(content);
   });
 }

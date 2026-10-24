@@ -175,10 +175,23 @@ class Game {
   }
 
   claimIllu(playerName) {
-    if (!this.claimsIllu.includes(playerName)) {
-      this.claimsIllu.push(playerName);
-      this.addLog(`${playerName} revendique Illusionniste`);
+    if (
+      this.phase !== "IN_PROGRESS" ||
+      !this.actionInProgress ||
+      this.actionInProgress.role !== "Illusionniste"
+    ) {
+      return;
     }
+
+    const player = this.players.find(p => p.name === playerName);
+
+    if (!player || !player.isAlive) return;
+    if (player === this.actionInProgress.actor) return;
+    if (this.claimsIllu.includes(playerName)) return;
+
+    this.claimsIllu.push(playerName);
+    this.addLog(`${playerName} revendique Illusionniste !`);
+
   }
 
   resolveChallenge() {
@@ -374,7 +387,7 @@ class Game {
   }
 
   broadcastState() {
-    this.players.forEach(p => {
+    this.players.forEach(recipient => {
       const state = {
         players: this.players.map(p => ({
           name: p.name,

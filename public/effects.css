@@ -1,0 +1,71 @@
+/* Petits gestes de table. Les éléments de jeu restent toujours utilisables. */
+.fx-layer {
+  position: fixed; inset: 0; z-index: 45; overflow: hidden;
+  pointer-events: none !important; user-select: none; contain: strict;
+}
+.fx-layer *, .fx-victory-flecks, .fx-victory-flecks * { pointer-events: none !important; }
+.fx-layer > * { position: absolute; margin: 0; }
+.fx-coin {
+  display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  background: #bd9243; color: #5d3b17; border: 3px double #efd38c;
+  box-shadow: 1px 3px 0 #6a451e, 2px 6px 8px #09050370, inset 0 0 0 1px #714a22;
+  font: 700 14px/1 var(--serif, Georgia, serif); transform-origin: center;
+}
+.fx-amount {
+  font: 700 27px/1 var(--serif, Georgia, serif); letter-spacing: -.5px;
+  text-shadow: 0 2px 2px #110b06, 1px 0 1px #110b06, -1px 0 1px #110b06;
+}
+.fx-gain { color: #f4d786; }
+.fx-loss { color: #e5a18a; }
+.fx-flying-card {
+  height: auto; max-width: 75px; border-radius: 3px;
+  box-shadow: 3px 7px 12px #06050380; object-fit: contain;
+}
+.fx-stamp {
+  padding: 6px 11px 4px; border: 3px double currentColor;
+  color: #772c24; background: #ead4a5ec; border-radius: 2px;
+  box-shadow: 2px 4px 7px #150a0560;
+  font: 800 20px/.95 var(--serif, Georgia, serif); letter-spacing: 2px;
+  white-space: nowrap; text-transform: uppercase;
+}
+.fx-stamp-large {
+  padding: 12px 20px 8px; border-width: 5px;
+  font-size: clamp(30px, 5.4vw, 65px); letter-spacing: 3px;
+  background: #ead4a5f5; box-shadow: 5px 10px 20px #130a0670;
+}
+.fx-stamp-green { color: #345137; }
+.fx-stamp-wine { color: #812f27; }
+.result-view { position: relative; }
+.fx-victory-flecks { position: absolute; inset: 0; overflow: hidden; z-index: 1; }
+.fx-victory-flecks i {
+  position: absolute; width: 5px; height: 8px; border: 1px solid #d9b76b;
+  background: #b28b3c; border-radius: 1px; box-shadow: 1px 2px 3px #3c271b24;
+}
+.fx-victory-flecks i:nth-child(3n) { width: 3px; height: 6px; background: #e3c889; }
+.fx-card-tilt {
+  transform: perspective(650px) rotateX(var(--fx-tilt-x, 0deg)) rotateY(var(--fx-tilt-y, 0deg)) !important;
+  transition: transform 100ms ease-out !important; transform-origin: center;
+}
+body[data-motion="full"] .card-inspect .carte,
+body[data-motion="full"] .hero-card img,
+body[data-motion="full"] .role-lineup button img { transition: transform 180ms ease-out, filter 180ms ease-out; }
+body[data-motion="full"] .discussion-accuse:hover:not(:disabled) { rotate: -1.5deg; }
+body[data-motion="full"] .discussion-accept:active:not(:disabled) { translate: 0 2px; }
+body[data-motion="full"] .decision-card[aria-pressed="true"] { rotate: -1deg; }
+body[data-motion="reduced"] *, body[data-motion="reduced"] *::before, body[data-motion="reduced"] *::after {
+  animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+  transition-duration: .01ms !important; scroll-behavior: auto !important;
+}
+body[data-motion="reduced"] .fx-layer, body[data-motion="reduced"] .fx-victory-flecks { display: none; }
+body[data-motion="reduced"] .card-inspect:hover .carte,
+body[data-motion="reduced"] .hero-card:hover img,
+body[data-motion="reduced"] .role-lineup button:hover img { transform: none; }
+@media (max-width: 600px) {
+  .fx-amount { font-size: 23px; }
+  .fx-stamp:not(.fx-stamp-large) { font-size: 16px; letter-spacing: 1.3px; }
+  .fx-coin { width: 18px; height: 18px; font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fx-layer, .fx-victory-flecks { display: none; }
+  .fx-card-tilt { transform: none !important; }
+}

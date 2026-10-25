@@ -1,57 +1,153 @@
-<!-- index.html -->
 <!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>🎩 Magouille</title>
-  <link rel="stylesheet" href="style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14392f">
+  <meta name="description" content="Prenez place à la table de Magouille. Un jeu de bluff, de pouvoir et de faux-semblants à partager entre amis, inspiré de Complots.">
+  <title>Magouille — Le salon des intrigues</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2314392f'/%3E%3Cpath d='M12 46V18h7l13 18 13-18h7v28h-7V29L32 46 19 29v17z' fill='%23d3b373'/%3E%3C/svg%3E">
+  <link rel="preload" href="fonts/cormorant-garamond-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/manrope-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="style.css?v=salon-1">
 </head>
-<body>
-  <div class="container">
-    <h1>🎩 Magouille</h1>
-    <div id="etat" class="status-bar"></div>
-
-    <div class="board">
-      <div class="player-info">
-        <div id="cartes" class="cartes">🃏 Tes cartes :</div>
-        <div id="pieces" class="pieces">💰 Pièces :</div>
-      </div>
-
-      <div class="actions-zone">
-        <h3>🎯 Actions</h3>
-        <div id="actions"></div>
-      </div>
-
-      <div class="votes-zone">
-        <h3>🗳️ Vote</h3>
-        <div id="votes"></div>
-      </div>
-
-      <div class="annonces-zone">
-        <h3>🗣️ Annonces</h3>
-        <div id="annonces"></div>
-      </div>
-
-      <div class="journal-zone">
-        <h3>📜 Journal de partie</h3>
-        <pre id="journal"></pre>
-      </div>
+<body data-screen="lobby">
+  <a class="skip-link" href="#main-content">Aller au jeu</a>
+  <div class="paper-grain" aria-hidden="true"></div>
+  <header class="site-header">
+    <div class="brand" aria-label="Magouille, le salon des intrigues">
+      <span class="brand-mark" aria-hidden="true">M<span>✦</span></span>
+      <div class="brand-wordmark">Magouille<span>LE SALON DES INTRIGUES</span></div>
     </div>
-
-    <div id="table-container">
-      <div id="joueur-top"    class="player-slot"></div>
-      <div id="joueur-right"  class="player-slot"></div>
-      <div id="joueur-bottom" class="player-slot"></div>
-      <div id="joueur-left"   class="player-slot"></div>
-      <div id="table-center">
-        <span id="nb-pioche"></span>
+    <div class="header-tools">
+      <div id="connection-indicator" class="connection-indicator" data-state="connecting">
+        <span class="connection-dot" aria-hidden="true"></span><span id="connection-status">Connexion…</span>
       </div>
+      <div id="room-chip" hidden>
+        <button id="copy-room" class="room-chip" type="button" title="Copier le code de la salle">
+          <span class="room-chip-label">SALON</span><strong id="room-code">------</strong>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg>
+        </button>
+      </div>
+      <button id="sound-toggle" class="utility-button sound-toggle" type="button" aria-pressed="false" title="Activer les sons">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4zM16 9l5 6m0-6-5 6"/></svg><span id="sound-label">Son coupé</span>
+      </button>
+      <button id="guide-toggle" class="utility-button guide-toggle" type="button" aria-label="Ouvrir le guide">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 6c-3-2-7-2-9-1v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-2-1-6-1-9 1Zm0 0v14"/></svg><span>Le guide</span>
+      </button>
     </div>
-  </div>
+  </header>
 
-  <!-- Socket.IO -->
+  <main id="main-content" class="app-main" tabindex="-1">
+    <section id="lobby-view" class="lobby-view" aria-label="Bienvenue dans Magouille">
+      <div class="lobby-hero">
+        <div class="lobby-copy">
+          <p class="eyebrow"><span class="tiny-diamond" aria-hidden="true"></span> LA CONFIANCE EST UN JEU DANGEREUX</p>
+          <h1>Une table.<br>Quatre joueurs.<br><em>Aucun innocent.</em></h1>
+          <p class="hero-description">Prenez le pouvoir, gardez vos secrets.<br>Et surtout, regardez vos amis dans les yeux.</p>
+          <div class="lobby-form-card">
+            <div class="form-card-top"><span class="eyebrow">VOTRE PLACE VOUS ATTEND</span><span class="small-star" aria-hidden="true">✦</span></div>
+            <div id="lobby-actions"></div>
+          </div>
+          <div class="lobby-facts" aria-label="Informations de jeu">
+            <span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6m1 3a5 5 0 0 1 3 4v2"/></svg>4 joueurs</span>
+            <span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="5" width="11" height="16" rx="2"/><path d="m9 4 8-2 4 16-5 1M9.5 10l2 3-2 3-2-3z"/></svg>2 cartes secrètes</span>
+            <span><span class="small-star" aria-hidden="true">✦</span>Du bluff, beaucoup</span>
+          </div>
+        </div>
+        <div class="lobby-scene" aria-hidden="true">
+          <div class="scene-glow"></div>
+          <div class="scene-table"><div class="scene-table-inner"></div></div>
+          <div class="scene-ornament ornament-top">✦</div>
+          <div class="scene-label">LE POUVOIR CHANGE DE MAIN.</div>
+          <div class="hero-card-fan">
+            <img class="hero-card hero-card-left" src="images/cartes/croquemort.png" alt="" width="478" height="717" draggable="false">
+            <img class="hero-card hero-card-center" src="images/cartes/pape.png" alt="" width="477" height="716" draggable="false">
+            <img class="hero-card hero-card-right" src="images/cartes/illusionniste.png" alt="" width="476" height="714" draggable="false">
+          </div>
+          <div class="scene-coin coin-one"><span>M</span></div>
+          <div class="scene-coin coin-two"><span>M</span></div>
+          <div class="scene-coin coin-three"><span>M</span></div>
+          <div class="scene-seal"><span>BLUFF</span><b>&</b><span>FAUX-SEMBLANTS</span></div>
+          <p class="scene-quote">« Je ne vous demande pas de me croire.<br>Je vous demande de prendre le risque. »</p>
+          <div class="scene-ornament ornament-bottom">✦</div>
+          <span class="scene-corner corner-one"></span><span class="scene-corner corner-two"></span>
+          <span class="scene-corner corner-three"></span><span class="scene-corner corner-four"></span>
+        </div>
+      </div>
+      <section class="lobby-discover" aria-labelledby="discover-title">
+        <div class="discover-heading"><span class="eyebrow">CINQ VISAGES. MILLE MENSONGES.</span><h2 id="discover-title">Quel rôle allez-vous jouer ?</h2></div>
+        <div class="role-lineup" aria-hidden="true">
+          <img src="images/cartes/illusionniste.png" alt="" loading="lazy" width="476" height="714">
+          <img src="images/cartes/croquemort.png" alt="" loading="lazy" width="478" height="717">
+          <img src="images/cartes/pape.png" alt="" loading="lazy" width="477" height="716">
+          <img src="images/cartes/maitrechanteur.png" alt="" loading="lazy" width="477" height="716">
+          <img src="images/cartes/espion.png" alt="" loading="lazy" width="477" height="715">
+        </div>
+        <button id="lobby-guide" class="text-link" type="button">Rencontrer les personnages <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></button>
+      </section>
+    </section>
+
+    <section id="play-view" class="play-view" aria-label="Table de jeu" hidden>
+      <div class="play-heading">
+        <div><p id="table-status" class="eyebrow">INSTALLEZ-VOUS</p><h1 id="etat" class="game-status" aria-live="polite" aria-atomic="true">Le salon se prépare.</h1></div>
+        <div class="play-heading-note"><span class="tiny-diamond" aria-hidden="true"></span><span>Les cartes sont secrètes.<br>Les intentions, encore plus.</span></div>
+      </div>
+      <div class="table-layout">
+        <div class="table-panel">
+          <div class="table-topline"><span id="table-caption">Salon privé</span><span class="table-edition">MAGOUILLE · ÉDITION ENTRE AMIS</span></div>
+          <div id="table-container" class="game-table">
+            <span class="felt-ornament felt-ornament-top" aria-hidden="true">✦</span>
+            <span class="felt-ornament felt-ornament-bottom" aria-hidden="true">✦</span>
+            <section id="joueur-top" class="player-slot" aria-label="Place du haut"></section>
+            <section id="joueur-right" class="player-slot" aria-label="Place de droite"></section>
+            <section id="joueur-bottom" class="player-slot" aria-label="Votre place"></section>
+            <section id="joueur-left" class="player-slot" aria-label="Place de gauche"></section>
+            <div id="table-center" class="table-center">
+              <span class="table-watermark" aria-hidden="true">M</span>
+              <div class="table-reserves">
+                <div class="deck-reserve"><div class="deck-stack" aria-hidden="true"><img src="images/cartes/dos.png" alt="" width="173" height="260" draggable="false"></div><span id="nb-pioche">Pioche</span></div>
+                <div class="reserve-divider" aria-hidden="true"></div>
+                <div class="coin-reserve"><div class="coin-stack" aria-hidden="true"><i></i><i></i><i><span>M</span></i></div><strong id="treasure-count">—</strong><span>TRÉSOR COMMUN</span></div>
+              </div>
+              <div id="annonces" class="table-announcement" role="status" aria-live="polite">Tout se joue autour de cette table.</div>
+            </div>
+            <p id="table-empty" class="table-empty">Les conspirateurs arrivent…</p>
+          </div>
+          <div id="waiting-panel" class="waiting-panel" hidden>
+            <div class="waiting-copy"><p class="eyebrow">RÉUNISSEZ VOTRE CERCLE</p><h2>Le complot se prépare.</h2><p id="waiting-hint">La partie commence dès que les quatre joueurs sont là.</p></div>
+            <div class="waiting-invite"><span id="waiting-count">1 / 4 joueurs</span><button id="waiting-copy" class="invite-code" type="button" title="Copier le code de la salle"><strong id="waiting-code">------</strong><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button><small>Partagez ce code à vos amis</small></div>
+          </div>
+          <div id="hand-summary" class="hand-summary" hidden>
+            <div><span class="eyebrow">VOTRE JEU, VOTRE SECRET</span><p id="cartes">Vos cartes arrivent.</p></div>
+            <div class="hand-summary-right"><strong id="pieces">— pièces</strong><button id="privacy-toggle" type="button" class="utility-button" aria-pressed="false"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><span>Masquer mes cartes</span></button></div>
+          </div>
+        </div>
+        <aside class="game-sidebar" aria-label="Actions et journal">
+          <section id="decision-section" class="decision-section" aria-label="Réaction à l’action" hidden><div id="votes"></div></section>
+          <section class="actions-section">
+            <div class="section-heading"><div><p id="action-subtitle" class="eyebrow">À LA TABLE DU POUVOIR</p><h2 id="action-heading">Votre prochain coup</h2></div><span class="section-star" aria-hidden="true">✦</span></div>
+            <div id="actions"></div>
+            <button id="help-inline" class="text-link help-inline" type="button">Un doute sur un personnage ? <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></button>
+          </section>
+          <details id="journal-panel" class="journal-panel" open>
+            <summary><span><span class="journal-live-dot" aria-hidden="true"></span>Les murmures du salon</span><span class="journal-summary-end"><span id="log-count">0</span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></span></summary>
+            <div id="journal" class="journal" role="log" aria-live="polite" aria-relevant="additions" aria-label="Journal de partie"></div>
+          </details>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><span>MAGOUILLE<span class="footer-diamond" aria-hidden="true">◆</span>UNE CRÉATION ENTRE AMIS</span><span>Inspiré de l’univers de Complots.</span></footer>
+  <div id="toast-region" class="toast-region" role="status" aria-live="polite" aria-atomic="false"></div>
+  <div id="turn-banner" class="turn-banner" aria-hidden="true"></div>
+  <dialog id="game-dialog" class="game-dialog" aria-label="Personnages et aide de jeu">
+    <button id="dialog-close" class="dialog-close icon-button" type="button" aria-label="Fermer"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+    <div id="dialog-content"></div>
+  </dialog>
+  <noscript><div class="noscript">Activez JavaScript pour rejoindre la table de Magouille.</div></noscript>
   <script src="/socket.io/socket.io.js"></script>
-  <!-- Client JS (ESModule) -->
-  <script type="module" src="client.js"></script>
+  <script type="module" src="client.js?v=salon-1"></script>
 </body>
 </html>

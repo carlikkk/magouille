@@ -1,6 +1,7 @@
 // public/client.js
 // Présentation de Magouille. Le serveur reste seul responsable des règles et des choix autorisés.
-import { renderCard, renderCardBack, ROLE_DETAILS, createIcon } from './cards.js?v=discussion-1';
+import { renderCard, renderCardBack, ROLE_DETAILS, createIcon } from './cards.js?v=theatre-1';
+import { createAtmosphere } from './atmosphere.js?v=theatre-1';
 
 const socket = io();
 const $ = id => document.getElementById(id);
@@ -68,6 +69,14 @@ let privateInspection = null;
 let bannerTimer = null;
 let logTotal = 0;
 const knownPlayers = new Set();
+const atmosphere = createAtmosphere();
+
+// Les effets suivent les événements validés par le serveur. Ils ne pilotent
+// jamais une décision et une erreur de présentation ne doit pas bloquer le jeu.
+function sceneEffect(method, ...args) {
+  try { atmosphere[method]?.(...args); }
+  catch (error) { console.warn('Effet visuel indisponible :', method, error); }
+}
 
 function element(tag, text = '', className = '') {
   const node = document.createElement(tag);
@@ -134,20 +143,38 @@ function prepareAudio() {
 function playSound(kind) {
   if (!soundEnabled || !audioContext || audioContext.state !== 'running') return;
   try {
-    const notes = kind === 'turn' ? [392, 587] : kind === 'win' ? [392, 494, 587] : [523];
+    if (kind === 'card' || kind === 'stamp') {
+      const duration = kind === 'card' ? 0.09 : 0.16;
+      const buffer = audioContext.createBuffer(1, Math.ceil(audioContext.sampleRate * duration), audioContext.sampleRate);
+      const samples = buffer.getChannelData(0);
+      for (let i = 0; i < samples.length; i += 1) samples[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / samples.length, 2);
+      const noise = audioContext.createBufferSource();
+      const filter = audioContext.createBiquadFilter();
+      const volume = audioContext.createGain();
+      noise.buffer = buffer;
+      filter.type = kind === 'card' ? 'highpass' : 'lowpass';
+      filter.frequency.value = kind === 'card' ? 1900 : 380;
+      volume.gain.value = kind === 'card' ? 0.024 : 0.11;
+      noise.connect(filter); filter.connect(volume); volume.connect(audioContext.destination);
+      noise.onended = () => { noise.disconnect(); filter.disconnect(); volume.disconnect(); };
+      noise.start();
+      return;
+    }
+    const notes = kind === 'turn' ? [196, 294] : kind === 'win' ? [196, 247, 294, 392] : kind === 'coin' ? [1568, 2093] : [330];
     notes.forEach((frequency, index) => {
       const oscillator = audioContext.createOscillator();
       const gain = audioContext.createGain();
       const start = audioContext.currentTime + index * 0.12;
-      oscillator.type = 'sine';
+      oscillator.type = kind === 'coin' ? 'sine' : 'triangle';
       oscillator.frequency.value = frequency;
       gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(0.035, start + 0.015);
+      gain.gain.linearRampToValueAtTime(kind === 'coin' ? 0.014 : 0.025, start + 0.012);
       gain.gain.exponentialRampToValueAtTime(0.001, start + 0.17);
       oscillator.connect(gain);
       gain.connect(audioContext.destination);
       oscillator.start(start);
       oscillator.stop(start + 0.19);
+      oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
     });
   } catch { /* Option purement visuelle/sonore, sans impact sur le protocole. */ }
 }
@@ -215,6 +242,8 @@ function roleText(role) {
   return ROLE_DETAILS[role] || { name: role, short: '', effect: '', note: '', icon: 'spark', clan: '' };
 }
 function inspectCard(role, opener, inspection = null) {
+  prepareAudio();
+  playSound('card');
   const detail = roleText(role);
   const content = element('div', '', 'card-detail');
   content.appendChild(renderCard(role));
@@ -265,6 +294,11 @@ function openGuide() {
   showDialog(content, 'guide');
 }
 ['guide-toggle', 'help-inline', 'lobby-guide'].forEach(id => $(id)?.addEventListener('click', openGuide));
+document.addEventListener('click', event => {
+  const portrait = event.target.closest?.('[data-inspect-role]');
+  const role = portrait?.dataset.inspectRole;
+  if (role && Object.hasOwn(ROLE_DETAILS, role)) inspectCard(role, portrait);
+});
 
 async function copyRoom() {
   const code = roomCode;
@@ -309,6 +343,7 @@ ui.privacy.addEventListener('click', () => {
 });
 
 function resetSession() {
+  sceneEffect('reset');
   sessionVersion += 1;
   clearTimeout(bannerTimer);
   bannerTimer = null;
@@ -330,7 +365,7 @@ function resetSession() {
   ui.discussion.replaceChildren();
   ui.discussion.hidden = true;
   ui.decisions.hidden = true;
-  ui.announcements.textContent = 'Les meilleures intentions cachent parfois un beau mensonge.';
+  ui.announcements.textContent = 'Les cartes attendent. Les mensonges aussi.';
   ui.actions.replaceChildren();
   ui.ownCoins.textContent = '—';
   ui.deck.textContent = '—';
@@ -368,16 +403,16 @@ function renderLobby(message = '') {
   form.setAttribute('aria-labelledby', 'lobby-' + lobbyMode + '-tab');
   form.noValidate = true;
   const joining = lobbyMode === 'join';
-  form.appendChild(element('h2', joining ? 'Ta place t’attend.' : 'Ouvre les portes du salon.', 'lobby-form-heading'));
+  form.appendChild(element('h2', joining ? 'Retrouve tes complices.' : 'Installe ta table.', 'lobby-form-heading'));
   const nameField = element('label', '', 'field');
-  nameField.appendChild(element('span', 'Ton prénom', 'field-label'));
+  nameField.appendChild(element('span', 'Ton nom autour de la table', 'field-label'));
   const nameInput = element('input', '', 'field-input');
   nameInput.name = 'playerName';
   nameInput.type = 'text';
   nameInput.maxLength = 30;
   nameInput.required = true;
   nameInput.autocomplete = 'nickname';
-  nameInput.placeholder = 'Comment doit-on t’appeler ?';
+  nameInput.placeholder = 'Un nom, même d’emprunt…';
   nameInput.value = nameDraft;
   nameInput.addEventListener('input', () => { nameDraft = nameInput.value; });
   nameField.appendChild(nameInput);
@@ -405,7 +440,7 @@ function renderLobby(message = '') {
   const submit = makeButton(joining ? 'Rejoindre la partie' : 'Créer une partie', null, 'button button-primary lobby-submit', 'arrowRight');
   submit.type = 'submit';
   submit.disabled = !socket.connected;
-  form.append(submit, feedback, element('p', joining ? 'Demande le code à la personne qui a créé le salon.' : 'Quatre joueurs. Un code à partager. La partie peut commencer.', 'form-footer'));
+  form.append(submit, feedback, element('p', joining ? 'Le code est entre les mains de l’hôte.' : 'Partage le code avec trois amis. On distribue dès que tout le monde est là.', 'form-footer'));
   if (!socket.connected) form.appendChild(makeButton('Réessayer la connexion', () => socket.connect(), 'button button-ghost'));
   form.addEventListener('submit', event => {
     event.preventDefault();
@@ -612,13 +647,13 @@ function renderActions(state) {
   const active = state.players.find(p => p.id === state.currentPlayerId);
   if (!state.actions.length) {
     selectedAction = null;
-    ui.actionHeading.textContent = me?.isAlive ? 'L’intrigue se poursuit' : 'La partie continue';
-    ui.actionSubtitle.textContent = me?.isAlive ? 'Chaque réaction compte.' : 'Tu peux suivre la fin de la partie.';
+    ui.actionHeading.textContent = me?.isAlive ? 'La parole est à la table' : 'Depuis les coulisses';
+    ui.actionSubtitle.textContent = me?.isAlive ? 'Tendez l’oreille.' : 'Le dernier mot n’est pas encore dit.';
     emptyAction(me?.isAlive ? state.currentPlayerId === playerId ? 'Ton action est en cours.' : 'Observe la table.' : 'Tu es éliminé.',
-      me?.isAlive ? 'Les décisions qui te concernent apparaîtront ici.' : 'Tes cartes restent visibles. Les autres joueurs continuent.', me?.isAlive ? 'hourglass' : 'eye');
+      me?.isAlive ? 'Les annonces et les accusations se règlent ensemble.' : 'Tes cartes restent visibles. Les autres joueurs continuent.', me?.isAlive ? 'hourglass' : 'eye');
     return;
   }
-  ui.actionHeading.textContent = 'À toi de jouer';
+  ui.actionHeading.textContent = 'À toi de manigancer';
   ui.actionSubtitle.textContent = me?.coins >= 10 ? 'Avec 10 pièces ou plus, tu dois assassiner.' : 'Choisis ton action. Le bluff est permis.';
   if (selectedAction && (selectedAction.turnId !== state.turnId || !state.actions.some(option => option.action === selectedAction.action && !option.disabled))) selectedAction = null;
   const panel = element('div', '', 'action-panel');
@@ -904,6 +939,8 @@ function renderDiscussion(payload, notify = false) {
       });
     }
   }
+  sceneEffect('onDiscussion', previous, payload, playerId);
+  if (payload.status === 'challenge' && previous?.status !== 'challenge') playSound('stamp');
 }
 
 function submitDiscussion(discussion, answer) {
@@ -1073,6 +1110,7 @@ function appendLog(line) {
   ui.logCount.textContent = String(ui.journal.children.length);
   ui.logCount.title = logTotal > 100 ? 'Les 100 événements les plus récents' : 'Événements de la partie';
   if (nearBottom) ui.journal.scrollTop = ui.journal.scrollHeight;
+  sceneEffect('onLog', text);
 }
 socket.on('logUpdate', appendLog);
 
@@ -1150,6 +1188,11 @@ socket.on('stateUpdate', state => {
   ui.ownCoins.textContent = (me?.coins ?? '—') + ' pièce' + (me?.coins === 1 ? '' : 's');
   renderActions(state);
   renderCircle(state, previous);
+  sceneEffect('onState', previous, state, playerId);
+  if (previous && state.players.some(player => {
+    const before = previous.players.find(old => old.id === player.id);
+    return before && before.coins !== player.coins;
+  })) playSound('coin');
   if (state.phase === 'IN_PROGRESS') {
     const active = state.players.find(p => p.id === state.currentPlayerId);
     ui.status.textContent = me?.isAlive ? 'L’intrigue est en cours' : 'Depuis les coulisses';
@@ -1158,6 +1201,7 @@ socket.on('stateUpdate', state => {
 });
 socket.on('nouveauTour', ({ joueurActif, playerId: activeId, turnId }) => {
   if (currentState && currentState.turnId !== turnId) return;
+  sceneEffect('onTurn', { name: joueurActif, isMine: activeId === playerId });
   ui.state.textContent = activeId === playerId ? 'C’est ton tour.' : 'Au tour de ' + joueurActif + '.';
   ui.announcements.textContent = activeId === playerId ? 'La table attend ton prochain mouvement.' : joueurActif + ' prépare son prochain mouvement.';
   if (activeId === playerId && lastTurnNotified !== turnId) {
@@ -1171,6 +1215,7 @@ socket.on('actionAnnoncee', ({ joueur, description, cible }) => {
   action.append(element('span', joueur, 'announcement-player'), element('strong', description, 'announcement-action'));
   if (cible) action.appendChild(element('span', 'sur ' + cible, 'announcement-target'));
   ui.announcements.replaceChildren(action);
+  sceneEffect('onAction', { name: joueur, description, target: cible });
 });
 socket.on('gameEnded', ({ winnerId, winnerName, aborted, reason }) => {
   sessionVersion += 1;
@@ -1205,6 +1250,7 @@ socket.on('gameEnded', ({ winnerId, winnerName, aborted, reason }) => {
   controls.appendChild(makeButton('Revenir au salon', closeDialog, 'button button-primary', 'arrowRight'));
   content.appendChild(controls);
   showDialog(content, 'result');
+  sceneEffect('onEnd', { winnerName, isWinner: winnerId === playerId, aborted });
   if (!aborted) playSound('win');
   toast(aborted ? reason || 'La partie a été interrompue.' : 'Victoire de ' + winnerName + '.', aborted ? 'danger' : 'success');
 });

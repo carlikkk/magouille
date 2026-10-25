@@ -55,6 +55,7 @@ class Game {
     this.turnId = 0;
     this.actionInProgress = null;
     this.interaction = null;
+    this.discussion = null;
     this.estates = [];
     this.activeEstate = null;
     this.processingEstates = false;
@@ -339,7 +340,7 @@ class Game {
   }
 
   respond(player, payload) {
-    if (this.phase !== "IN_PROGRESS" || !player || !player.isAlive) {
+    if (this.phase !== "IN_PROGRESS" || !player || !this.players.includes(player) || !player.isAlive) {
       return { ok: false, message: "Tu ne peux pas répondre." };
     }
     const interaction = this.interaction;
@@ -385,47 +386,402 @@ class Game {
     return { ok: true };
   }
 
+  createDiscussionContext(actor, role, { title, target = null, simple = false } = {}) {
+    const context = {
+      id: nanoid(12), kind: "action", role, actor, target,
+      title: title || (actor.name + " annonce " + role),
+      message: "Les déclarations restent ouvertes jusqu'à l'accord de toute la table.",
+      declarations: [], responses: new Map(), required: new Map(), cancelled: false
+    };
+    context.primaryClaim = this.addDeclaration(context, actor, role, true);
+    context.responses.set(actor.id, {
+      choice: "announce", label: "Annonce " + role
+    });
+    if (!simple) {
+      this.livingPlayers().forEach(player => {
+        if (player === actor) return;
+        if (role === "Illusionniste") context.required.set(player.id, "illusion");
+        if (role === "Pape") context.required.set(player.id, "pope");
+        if (role === "Maître-Chanteur" && player === target) {
+          context.required.set(player.id, "blackmail");
+        }
+      });
+    }
+    if (role === "Maître-Chanteur" && target) {
+      context.title = "Chantage de " + actor.name + " sur " + target.name;
+      context.message = "Le Maître-Chanteur et l'éventuel contre Croque-Mort restent contestables ensemble. Aucune pièce n'est transférée avant l'accord de tous.";
+    }
+    return context;
+  }
+
+  addDeclaration(context, player, role, primary = false) {
+    const declaration = {
+      id: nanoid(14), playerId: player.id, playerName: player.name,
+      role, status: "open", primary
+    };
+    context.declarations.push(declaration);
+    return declaration;
+  }
+
+  contextOptions(context, player) {
+    if (
+      context.cancelled || !player?.isAlive ||
+      !context.required.has(player.id) || context.responses.has(player.id)
+    ) return [];
+    switch (context.required.get(player.id)) {
+      case "illusion":
+        return [
+          { value: "claim", label: "Moi aussi, je suis Illusionniste" },
+          { value: "pass", label: "Ne pas revendiquer" }
+        ];
+      case "pope":
+        return [
+          { value: "pay", label: "Accepter la dîme" },
+          { value: "block", label: "Contrer : je suis aussi Pape" }
+        ];
+      case "blackmail":
+      case "blackmailFallback": {
+        const options = [];
+        if (player.coins >= 3) options.push({ value: "pay", label: "Payer 3 pièces" });
+        options.push({ value: "refuse", label: "Recevoir 3 pièces et perdre une carte" });
+        if (context.required.get(player.id) === "blackmail") {
+          options.push({ value: "block", label: "Contrer : je suis Croque-Mort" });
+        }
+        return options;
+      }
+      case "estate":
+        return [
+          { value: "claim", label: "Je suis Croque-Mort" },
+          { value: "pass", label: "Ne pas revendiquer cet héritage" }
+        ];
+      default:
+        return [];
+    }
+  }
+
+  pendingDiscussionResponses(discussion) {
+    const pending = [];
+    discussion.contexts.forEach(context => {
+      if (context.cancelled) return;
+      context.required.forEach((type, playerId) => {
+        const player = this.players.find(p => p.id === playerId);
+        if (player?.isAlive && !context.responses.has(playerId)) {
+          pending.push({
+            playerId, playerName: player.name,
+            contextId: context.id, contextTitle: context.title
+          });
+        }
+      });
+    });
+    return pending;
+  }
+
+  sendDiscussion(player) {
+    const discussion = this.discussion;
+    if (!discussion) return;
+    const open = discussion.status === "open" && !this.interaction;
+    const pendingResponses = this.pendingDiscussionResponses(discussion);
+    const accepted = player.isAlive && discussion.acceptances.has(player.id);
+    player.socket.emit("discussionUpdate", {
+      discussionId: discussion.id,
+      revision: discussion.revision,
+      status: discussion.status,
+      title: discussion.primary ? "La table délibère" : "Les héritages",
+      message: discussion.status === "challenge"
+        ? "Une accusation est en cours. La discussion reprendra après la perte de carte."
+        : "Chaque annonce est définitive. Tu peux accuser une déclaration ouverte, même après avoir accepté. Toute nouvelle situation demande l'accord de tous.",
+      challenge: discussion.challenge,
+      participants: this.livingPlayers().map(p => ({
+        id: p.id, name: p.name, accepted: discussion.acceptances.has(p.id)
+      })),
+      contexts: discussion.contexts.map(context => ({
+        id: context.id, kind: context.kind, title: context.title,
+        message: context.message,
+        ...(context.kind === "estate" ? {
+          amount: context.estate.coins, deceasedName: context.estate.name
+        } : {}),
+        declarations: context.declarations.map(declaration => ({
+          id: declaration.id, playerId: declaration.playerId,
+          playerName: declaration.playerName, role: declaration.role,
+          status: declaration.status,
+          challengeable: Boolean(
+            open && player.isAlive && !context.cancelled &&
+            declaration.status === "open" && declaration.playerId !== player.id &&
+            this.players.find(p => p.id === declaration.playerId)?.isAlive
+          )
+        })),
+        responses: [...context.responses].map(([playerId, response]) => ({
+          playerId, playerName: this.players.find(p => p.id === playerId)?.name || "",
+          choice: response.choice, label: response.label
+        })),
+        options: open && player.isAlive ? this.contextOptions(context, player) : []
+      })),
+      canAccept: Boolean(
+        open && player.isAlive && !accepted &&
+        !pendingResponses.some(response => response.playerId === player.id)
+      ),
+      accepted,
+      pendingResponses
+    });
+  }
+
+  broadcastDiscussion() {
+    this.players.forEach(player => this.sendDiscussion(player));
+  }
+
+  resetDiscussionConsent(discussion) {
+    discussion.revision += 1;
+    discussion.acceptances.clear();
+  }
+
+  attachNextEstate(discussion) {
+    if (this.activeEstate || !this.estates.length) return false;
+    const estate = this.estates.shift();
+    this.activeEstate = estate;
+    const context = {
+      id: nanoid(12), kind: "estate", estate,
+      title: "Héritage de " + estate.name + " : " + estate.coins + " pièce(s)",
+      message: "Cet héritage est distinct des autres. Les déclarations de l'action restent ouvertes pendant cette discussion.",
+      declarations: [], responses: new Map(), required: new Map(), cancelled: false
+    };
+    this.livingPlayers().forEach(player => context.required.set(player.id, "estate"));
+    discussion.contexts.push(context);
+    this.addLog("Les Croque-Morts peuvent revendiquer l'héritage de " + estate.name + ".");
+    return true;
+  }
+
+  openDiscussion(primary = null) {
+    this.assertRunning();
+    if (this.discussion || this.interaction) throw new Error("Une discussion ou décision est déjà en cours.");
+    if (!primary && !this.estates.length) {
+      return Promise.resolve({ accepted: false, proved: false, context: null });
+    }
+    return new Promise((resolve, reject) => {
+      const discussion = {
+        id: nanoid(16), revision: 1, status: "open", primary,
+        contexts: primary ? [primary] : [], acceptances: new Set(),
+        challenge: null, challengeTask: null, resolve, reject
+      };
+      this.discussion = discussion;
+      this.attachNextEstate(discussion);
+      this.broadcastDiscussion();
+    });
+  }
+
+  cancelDiscussionAction(context, reason) {
+    if (!context || context.cancelled) return;
+    context.cancelled = true;
+    context.message = reason + " Les effets et les autres déclarations de cette action sont annulés.";
+    context.required.clear();
+    context.declarations.forEach(declaration => {
+      if (declaration.status === "open" || declaration.status === "proved") {
+        declaration.status = "cancelled";
+      }
+    });
+    this.addLog(reason);
+  }
+
+  removeDeadDiscussionClaims(discussion) {
+    const primary = discussion.primary;
+    if (primary && (!primary.actor.isAlive || (primary.target && !primary.target.isAlive))) {
+      this.cancelDiscussionAction(primary, "L'action ne peut plus être appliquée : son auteur ou sa cible est éliminé.");
+    }
+    discussion.contexts.forEach(context => {
+      context.declarations.forEach(declaration => {
+        const player = this.players.find(p => p.id === declaration.playerId);
+        if (!player?.isAlive && (declaration.status === "open" || declaration.status === "proved")) {
+          declaration.status = "cancelled";
+        }
+      });
+    });
+  }
+
+  finishDiscussion(discussion) {
+    if (this.discussion !== discussion) return;
+    this.discussion = null;
+    discussion.status = "resolving";
+    this.broadcast("discussionClosed", { discussionId: discussion.id });
+    const context = discussion.primary;
+    discussion.resolve({
+      accepted: Boolean(context && !context.cancelled &&
+        ["open", "proved"].includes(context.primaryClaim.status)),
+      proved: context?.primaryClaim.status === "proved",
+      context
+    });
+  }
+
+  settleActiveEstate(discussion) {
+    const context = discussion.contexts.find(item => item.kind === "estate");
+    if (!context) return;
+    const estate = context.estate;
+    if (this.activeEstate !== estate) throw new Error("Héritage actif incohérent.");
+    const survivors = this.validDiscussionClaimants(context);
+    const share = survivors.length ? Math.floor(estate.coins / survivors.length) : 0;
+    survivors.forEach(player => { player.coins += share; });
+    this.treasure += estate.coins - share * survivors.length;
+    this.activeEstate = null;
+    discussion.contexts = discussion.contexts.filter(item => item !== context);
+    this.addLog(survivors.length
+      ? "Héritage de " + estate.name + " : " + share + " pièce(s) par Croque-Mort."
+      : "L'héritage de " + estate.name + " retourne au trésor.");
+    this.broadcastState();
+  }
+
+  maybeFinishDiscussion(discussion) {
+    if (this.discussion !== discussion || discussion.status !== "open") return;
+    if (this.pendingDiscussionResponses(discussion).length) return;
+    if (!this.livingPlayers().every(player => discussion.acceptances.has(player.id))) return;
+    // Verrou synchrone : un dernier accord ne peut pas courir avec une accusation.
+    discussion.status = "resolving";
+    this.broadcastDiscussion();
+    this.settleActiveEstate(discussion);
+    if (this.attachNextEstate(discussion)) {
+      // L'action initiale reste ouverte, mais cette succession exige de nouvelles annonces.
+      discussion.status = "open";
+      this.resetDiscussionConsent(discussion);
+      this.broadcastDiscussion();
+      return;
+    }
+    this.finishDiscussion(discussion);
+  }
+
+  respondDiscussion(player, payload) {
+    if (this.phase !== "IN_PROGRESS" || !player || !this.players.includes(player) || !player.isAlive) {
+      return { ok: false, message: "Tu ne peux pas participer à cette discussion." };
+    }
+    const discussion = this.discussion;
+    if (!discussion || !payload || typeof payload !== "object" || payload.discussionId !== discussion.id) {
+      return { ok: false, message: "Cette discussion est terminée." };
+    }
+    if (payload.revision !== discussion.revision) {
+      this.sendDiscussion(player);
+      return { ok: false, message: "La situation a changé. Relis les déclarations puis réponds à nouveau." };
+    }
+    if (discussion.status !== "open" || this.interaction) {
+      return { ok: false, message: "Il faut d'abord terminer l'accusation en cours." };
+    }
+
+    if (payload.type === "accept") {
+      if (discussion.acceptances.has(player.id)) {
+        return { ok: false, message: "Tu as déjà accepté cette situation." };
+      }
+      if (this.pendingDiscussionResponses(discussion).some(item => item.playerId === player.id)) {
+        return { ok: false, message: "Fais d'abord tes déclarations ou choisis de ne pas revendiquer." };
+      }
+      discussion.acceptances.add(player.id);
+      this.broadcastDiscussion();
+      this.maybeFinishDiscussion(discussion);
+      return { ok: true };
+    }
+
+    if (payload.type === "declare") {
+      const context = discussion.contexts.find(item => item.id === payload.contextId);
+      const option = context && this.contextOptions(context, player).find(item => item.value === payload.choice);
+      if (!option) return { ok: false, message: "Cette annonce est impossible ou déjà verrouillée." };
+      context.responses.set(player.id, { choice: option.value, label: option.label });
+      const type = context.required.get(player.id);
+      if (option.value === "claim") {
+        this.addDeclaration(context, player, type === "estate" ? "Croque-Mort" : "Illusionniste");
+      } else if (option.value === "block") {
+        this.addDeclaration(context, player, type === "pope" ? "Pape" : "Croque-Mort");
+      }
+      this.addLog(player.name + " : " + option.label + " (" + context.title + ").");
+      this.resetDiscussionConsent(discussion);
+      this.broadcastDiscussion();
+      return { ok: true };
+    }
+
+    if (payload.type === "challenge") {
+      const context = discussion.contexts.find(item => item.declarations.some(claim => claim.id === payload.claimId));
+      const claim = context?.declarations.find(item => item.id === payload.claimId);
+      const claimant = claim && this.players.find(item => item.id === claim.playerId);
+      if (!claim || context.cancelled || claim.status !== "open" || !claimant?.isAlive || claimant === player) {
+        return { ok: false, message: "Cette déclaration ne peut pas être contestée." };
+      }
+      // Le premier message valide pose le verrou avant toute opération asynchrone.
+      discussion.status = "challenge";
+      discussion.challenge = {
+        claimId: claim.id, challengerId: player.id, challengerName: player.name,
+        claimantId: claimant.id, claimantName: claimant.name, role: claim.role
+      };
+      this.resetDiscussionConsent(discussion);
+      this.broadcastDiscussion();
+      discussion.challengeTask = Promise.resolve()
+        .then(() => this.resolveDiscussionChallenge(discussion, context, claim, player))
+        .catch(error => {
+          if (error instanceof GameStopped) return;
+          console.error("Erreur de contestation dans la partie " + this.code + " :", error);
+          this.abort("Une erreur a interrompu la partie. Créez une nouvelle salle.");
+        });
+      return { ok: true };
+    }
+    return { ok: false, message: "Réponse de discussion inconnue." };
+  }
+
+  async resolveDiscussionChallenge(discussion, context, claim, challenger) {
+    this.assertRunning();
+    if (this.discussion !== discussion) return;
+    const claimant = this.players.find(player => player.id === claim.playerId);
+    const truthful = await this.resolveChallenge(claimant, claim.role, challenger, claim);
+    this.assertRunning();
+    if (this.discussion !== discussion) return;
+    if (!truthful && claim.primary) {
+      this.cancelDiscussionAction(context, claimant.name + " a menti sur sa déclaration initiale.");
+    } else if (
+      !truthful && context.kind === "action" && context.role === "Maître-Chanteur" &&
+      claimant === context.target && claimant.isAlive && !context.cancelled
+    ) {
+      // Une fausse défense ne permet pas de revendiquer à nouveau ; seule sa conséquence reste à choisir.
+      context.required.set(claimant.id, "blackmailFallback");
+      context.responses.delete(claimant.id);
+    }
+    this.removeDeadDiscussionClaims(discussion);
+    this.attachNextEstate(discussion);
+    discussion.challenge = null;
+    discussion.status = "open";
+    this.resetDiscussionConsent(discussion);
+    if ((!discussion.primary || discussion.primary.cancelled) && !this.activeEstate && !this.estates.length) {
+      this.finishDiscussion(discussion);
+      return;
+    }
+    this.broadcastDiscussion();
+  }
+
+  validDiscussionClaimants(context, { secondaryOnly = false } = {}) {
+    const ids = new Set(context.declarations.filter(claim =>
+      (!secondaryOnly || !claim.primary) && ["open", "proved"].includes(claim.status)
+    ).map(claim => claim.playerId));
+    return this.livingPlayers().filter(player => ids.has(player.id));
+  }
+
   async challengeWindow(claimant, role, title) {
     this.assertRunning();
     if (!claimant.isAlive) return { accepted: false, proved: false };
-    const result = await this.requestDecision({
-      participants: this.livingPlayers().filter(p => p !== claimant),
-      title: title || (claimant.name + " affirme être " + role),
-      message: "La première accusation interrompt immédiatement les réponses.",
-      firstChoices: ["challenge"],
-      viewFor: () => ({
-        options: [
-          { value: "ok", label: "Accepter" },
-          { value: "challenge", label: "Menteur !" }
-        ]
-      })
-    });
-    this.assertRunning();
-    if (!result.first) return { accepted: true, proved: false };
-    const challenger = this.players.find(p => p.id === result.first.playerId);
-    const truthful = await this.resolveChallenge(claimant, role, challenger);
-    return { accepted: truthful, proved: truthful };
+    return this.openDiscussion(this.createDiscussionContext(claimant, role, { title, simple: true }));
   }
 
-  async resolveChallenge(claimant, role, challenger) {
+  async resolveChallenge(claimant, role, challenger, declaration = null) {
     this.assertRunning();
-    const truthful = claimant.hand.some(c => c.role === role);
+    const truthful = claimant.hand.some(card => card.role === role);
+    if (declaration) declaration.status = truthful ? "proved" : "disproved";
     this.addLog(challenger.name + " accuse " + claimant.name + " de mentir.");
     if (truthful) {
       this.addLog(claimant.name + " prouve sa carte " + role + ".");
       this.replaceCard(claimant, role);
       this.broadcastState();
+      this.broadcastDiscussion();
       await this.loseInfluence(challenger, "Accusation incorrecte");
     } else {
       this.addLog(claimant.name + " n'a pas de carte " + role + ".");
+      this.broadcastDiscussion();
       await this.loseInfluence(claimant, "Bluff découvert");
     }
-    await this.settleEstates();
+    // Les héritages rejoignent la discussion commune, jamais une fenêtre imbriquée.
     return truthful;
   }
 
   replaceCard(player, role) {
-    const index = player.hand.findIndex(c => c.role === role);
+    const index = player.hand.findIndex(card => card.role === role);
     if (index < 0) throw new Error("La carte prouvée est absente.");
     const [card] = player.hand.splice(index, 1);
     this.deck.push(card);
@@ -442,11 +798,7 @@ class Game {
         participants: [player],
         title: player.name + " doit perdre une carte",
         message: reason + " : choisis la carte à révéler définitivement.",
-        viewFor: () => ({
-          kind: "cards",
-          cards: player.hand.map(c => c.role),
-          count: 1
-        })
+        viewFor: () => ({ kind: "cards", cards: player.hand.map(card => card.role), count: 1 })
       });
       this.assertRunning();
       index = result.answers.get(player.id)[0];
@@ -458,7 +810,7 @@ class Game {
       player.isAlive = false;
       const coins = player.coins;
       player.coins = 0;
-      if (coins > 0) this.estates.push({ name: player.name, coins });
+      if (coins > 0) this.estates.push({ id: nanoid(12), name: player.name, playerId: player.id, coins });
       this.addLog("☠️ " + player.name + " est éliminé.");
     }
     this.broadcastState();
@@ -470,7 +822,7 @@ class Game {
 
   async foreignAid(actor) {
     const result = await this.requestDecision({
-      participants: this.livingPlayers().filter(p => p !== actor),
+      participants: this.livingPlayers().filter(player => player !== actor),
       title: "Aide étrangère de " + actor.name,
       message: "Le clan des Perceptrices peut bloquer l'aide étrangère.",
       firstChoices: ["block"],
@@ -483,10 +835,8 @@ class Game {
     });
     this.assertRunning();
     if (result.first) {
-      const blocker = this.players.find(p => p.id === result.first.playerId);
-      const block = await this.challengeWindow(
-        blocker, FOREIGN_AID_BLOCK_ROLE, "Contre de " + blocker.name
-      );
+      const blocker = this.players.find(player => player.id === result.first.playerId);
+      const block = await this.challengeWindow(blocker, FOREIGN_AID_BLOCK_ROLE, "Contre de " + blocker.name);
       if (block.accepted) {
         this.addLog("L'aide étrangère est bloquée.");
         return;
@@ -496,46 +846,20 @@ class Game {
   }
 
   async powerIllusionniste(actor) {
-    const initial = await this.challengeWindow(actor, "Illusionniste");
-    if (!initial.accepted || !actor.isAlive) return;
-
-    const opponents = this.livingPlayers().filter(p => p !== actor);
-    const answers = await this.requestDecision({
-      participants: opponents,
-      title: "Revendications Illusionniste",
-      message: "Chaque autre joueur peut réclamer une pièce sur les gains.",
-      viewFor: () => ({
-        options: [
-          { value: "claim", label: "Moi aussi, je suis Illusionniste" },
-          { value: "pass", label: "Ne pas revendiquer" }
-        ]
-      })
-    });
-    this.assertRunning();
-    const claimants = opponents.filter(p => answers.answers.get(p.id) === "claim");
-    const valid = [];
-    for (const claimant of claimants) {
-      if (!actor.isAlive) return;
-      if (!claimant.isAlive) continue;
-      const claim = await this.challengeWindow(
-        claimant, "Illusionniste", "Revendication de " + claimant.name
-      );
-      if (claim.accepted) valid.push(claimant);
-    }
-    if (!actor.isAlive) return;
-    const survivors = valid.filter(p => p.isAlive);
+    const context = this.createDiscussionContext(actor, "Illusionniste");
+    const result = await this.openDiscussion(context);
+    if (!result.accepted || !actor.isAlive) return;
+    const survivors = this.validDiscussionClaimants(context, { secondaryOnly: true });
     if (survivors.length >= 4) {
       this.addLog("Quatre revendications ou plus : aucun gain.");
       return;
     }
     this.takeFromTreasury(actor, 4);
-    survivors.forEach(p => this.transfer(actor, p, 1));
+    survivors.forEach(player => this.transfer(actor, player, 1));
     if (survivors.length) this.addLog(actor.name + " partage ses gains avec les revendiquants.");
   }
 
   async powerEspion(actor) {
-    // La mécanique déjà présente dans le projet est conservée : une carte piochée,
-    // puis autant de cartes gardées que de vies restantes. Le coût revient au trésor.
     for (let round = 0; round < 2; round++) {
       const claim = await this.challengeWindow(
         actor, "Espion",
@@ -548,7 +872,6 @@ class Game {
         this.treasure += 1;
         this.addLog(actor.name + " paie 1 pièce pour son deuxième échange.");
       }
-
       const drawn = this.deck.pop();
       if (!drawn) throw new Error("La pioche est vide.");
       this.pendingDraw = drawn;
@@ -556,26 +879,21 @@ class Game {
       const pool = [...actor.hand, drawn];
       this.broadcastState();
       const selection = await this.requestDecision({
-        participants: [actor],
-        title: "Échange de l'Espion",
+        participants: [actor], title: "Échange de l'Espion",
         message: "Choisis " + keepCount + " carte(s) à garder.",
-        viewFor: () => ({
-          kind: "cards", cards: pool.map(c => c.role), count: keepCount
-        })
+        viewFor: () => ({ kind: "cards", cards: pool.map(card => card.role), count: keepCount })
       });
       this.assertRunning();
       const chosen = new Set(selection.answers.get(actor.id));
-      actor.hand = pool.filter((_, i) => chosen.has(i));
-      this.deck.push(...pool.filter((_, i) => !chosen.has(i)));
+      actor.hand = pool.filter((_, index) => chosen.has(index));
+      this.deck.push(...pool.filter((_, index) => !chosen.has(index)));
       this.pendingDraw = null;
       this.shuffleDeck();
       this.broadcastState();
-
       if (round === 1 || actor.coins < 1) return;
       const repeat = await this.requestDecision({
-        participants: [actor],
-        title: "Rejouer l'Espion ?",
-        message: "Un seul échange supplémentaire est possible, pour 1 pièce.",
+        participants: [actor], title: "Rejouer l'Espion ?",
+        message: "Un seul échange supplémentaire est possible, pour 1 pièce. Toute la table devra accepter cette nouvelle déclaration.",
         viewFor: () => ({
           options: [
             { value: "again", label: "Rejouer pour 1 pièce" },
@@ -589,157 +907,46 @@ class Game {
   }
 
   async powerMaitreChanteur(actor, target) {
-    // La première réaction clôt la fenêtre d'accusation initiale. Après une preuve,
-    // le contre Croque-Mort reste possible (règle générale : défi puis contre).
-    // Un faux contre laisse à une cible survivante le choix payer/refuser.
-    let actorClaimOpen = true;
-    let blockAvailable = true;
-    while (actor.isAlive && target.isAlive) {
-      const participants = actorClaimOpen
-        ? this.livingPlayers().filter(p => p !== actor)
-        : [target];
-      const decision = await this.requestDecision({
-        participants,
-        title: "Chantage de " + actor.name + " sur " + target.name,
-        message: actorClaimOpen
-          ? "La première accusation, réponse ou déclaration de contre est prise en compte."
-          : "Le chantage continue. La cible doit choisir.",
-        mode: "first",
-        viewFor: player => {
-          const options = [];
-          if (player === target) {
-            if (target.coins >= 3) options.push({ value: "pay", label: "Payer 3 pièces" });
-            options.push({ value: "refuse", label: "Recevoir 3 pièces et perdre une carte" });
-            if (blockAvailable) {
-              options.push({ value: "block", label: "Contrer : je suis Croque-Mort" });
-            }
-          }
-          if (actorClaimOpen) options.push({ value: "challenge", label: "Menteur !" });
-          return { options };
-        }
-      });
-      this.assertRunning();
-      const { playerId, choice } = decision.first;
-      actorClaimOpen = false;
-
-      if (choice === "challenge") {
-        const challenger = this.players.find(p => p.id === playerId);
-        const truthful = await this.resolveChallenge(actor, "Maître-Chanteur", challenger);
-        if (!truthful) return;
-        continue;
-      }
-      if (choice === "block") {
-        blockAvailable = false;
-        const block = await this.challengeWindow(target, "Croque-Mort", "Contre du Croque-Mort");
-        if (block.accepted) {
-          this.addLog("Le Croque-Mort bloque le chantage.");
-          return;
-        }
-        continue;
-      }
-      if (choice === "pay") {
-        this.transfer(target, actor, 3);
-        this.addLog(target.name + " paie 3 pièces à " + actor.name + ".");
-        return;
-      }
-      this.transfer(actor, target, 3);
-      this.addLog(actor.name + " donne 3 pièces à " + target.name + ".");
-      this.broadcastState();
-      await this.loseInfluence(target, "Refus du chantage");
-      await this.settleEstates();
+    const context = this.createDiscussionContext(actor, "Maître-Chanteur", { target });
+    const result = await this.openDiscussion(context);
+    if (!result.accepted || !actor.isAlive || !target.isAlive) return;
+    const blocked = this.validDiscussionClaimants(context, { secondaryOnly: true }).includes(target);
+    if (blocked) {
+      this.addLog("Le Croque-Mort bloque le chantage.");
       return;
     }
+    if (context.responses.get(target.id)?.choice === "pay") {
+      this.transfer(target, actor, 3);
+      this.addLog(target.name + " paie 3 pièces à " + actor.name + ".");
+      return;
+    }
+    this.transfer(actor, target, 3);
+    this.addLog(actor.name + " donne 3 pièces à " + target.name + ".");
+    this.broadcastState();
+    await this.loseInfluence(target, "Refus du chantage");
+    await this.settleEstates();
   }
 
   async powerPape(actor) {
-    // Ordre de la table depuis le joueur actif. Une accusation tardive annule
-    // la suite de la dîme ; les paiements déjà effectués ne sont pas remboursés.
-    let actorProved = false;
-    const actorIndex = this.players.indexOf(actor);
-    const opponents = [];
-    for (let offset = 1; offset < this.players.length; offset++) {
-      opponents.push(this.players[(actorIndex + offset) % this.players.length]);
-    }
-
-    for (const opponent of opponents) {
-      if (!actor.isAlive) return;
-      if (!opponent.isAlive) continue;
-      const defense = await this.requestDecision({
-        participants: [opponent],
-        title: "Dîme du Pape : " + opponent.name,
-        message: actor.name + " réclame une pièce. Tu peux te déclarer Pape pour être exempté.",
-        viewFor: () => ({
-          options: [
-            { value: "pay", label: opponent.coins > 0 ? "Accepter la dîme" : "Je n'ai pas de pièce" },
-            { value: "block", label: "Contrer : je suis aussi Pape" }
-          ]
-        })
-      });
-      this.assertRunning();
-      let exempt = false;
-      if (defense.answers.get(opponent.id) === "block") {
-        const counter = await this.challengeWindow(opponent, "Pape", "Contre de " + opponent.name);
-        exempt = counter.accepted;
+    const context = this.createDiscussionContext(actor, "Pape");
+    const result = await this.openDiscussion(context);
+    if (!result.accepted || !actor.isAlive) return;
+    const exempt = new Set(this.validDiscussionClaimants(context, { secondaryOnly: true }));
+    this.livingPlayers().forEach(player => {
+      if (player !== actor && !exempt.has(player) && player.coins > 0) {
+        this.transfer(player, actor, 1);
+        this.addLog(player.name + " donne une pièce à " + actor.name + ".");
       }
-      if (!actor.isAlive) return;
-      if (!actorProved) {
-        const claim = await this.challengeWindow(
-          actor, "Pape", "Contester le Pape avant la dîme de " + opponent.name
-        );
-        if (!claim.accepted || !actor.isAlive) return;
-        actorProved = claim.proved;
-      }
-      if (opponent.isAlive && !exempt && opponent.coins > 0) {
-        this.transfer(opponent, actor, 1);
-        this.addLog(opponent.name + " donne une pièce à " + actor.name + ".");
-        this.broadcastState();
-      }
-    }
+    });
   }
 
   async settleEstates() {
     this.assertRunning();
-    // Une élimination pendant une revendication crée un héritage à traiter
-    // après l'héritage courant, sans réentrer dans cette procédure.
-    if (this.processingEstates) return;
+    if (this.discussion) return;
+    if (!this.estates.length) return;
     this.processingEstates = true;
     try {
-      while (this.estates.length) {
-        this.assertRunning();
-        const estate = this.estates.shift();
-        this.activeEstate = estate;
-        const participants = this.livingPlayers();
-        const replies = await this.requestDecision({
-          participants,
-          title: "Héritage de " + estate.name + " : " + estate.coins + " pièce(s)",
-          message: "Les Croque-Morts peuvent se partager cet héritage.",
-          viewFor: () => ({
-            options: [
-              { value: "claim", label: "Je suis Croque-Mort" },
-              { value: "pass", label: "Ne pas revendiquer" }
-            ]
-          })
-        });
-        this.assertRunning();
-        const claimants = participants.filter(p => replies.answers.get(p.id) === "claim");
-        const valid = [];
-        for (const claimant of claimants) {
-          if (!claimant.isAlive) continue;
-          const claim = await this.challengeWindow(
-            claimant, "Croque-Mort", "Héritage revendiqué par " + claimant.name
-          );
-          if (claim.accepted) valid.push(claimant);
-        }
-        const survivors = valid.filter(p => p.isAlive);
-        const share = survivors.length ? Math.floor(estate.coins / survivors.length) : 0;
-        survivors.forEach(p => { p.coins += share; });
-        this.treasure += estate.coins - share * survivors.length;
-        this.activeEstate = null;
-        this.addLog(survivors.length
-          ? "Héritage partagé : " + share + " pièce(s) par Croque-Mort."
-          : "L'héritage retourne au trésor.");
-        this.broadcastState();
-      }
+      await this.openDiscussion();
     } finally {
       this.processingEstates = false;
     }
@@ -748,6 +955,12 @@ class Game {
   stop(reason, aborted) {
     if (this.phase === "ENDED") return;
     this.phase = "ENDED";
+    if (this.discussion) {
+      const discussion = this.discussion;
+      this.discussion = null;
+      this.broadcast("discussionClosed", { discussionId: discussion.id });
+      discussion.reject(new GameStopped());
+    }
     if (this.interaction) {
       const interaction = this.interaction;
       this.interaction = null;
@@ -883,6 +1096,15 @@ function createApplication() {
         return reply(callback, { ok: false, message: "Cette partie n'est plus disponible." });
       }
       reply(callback, game.respond(player, payload));
+    });
+
+    socket.on("repondreDiscussion", (payload, callback) => {
+      const game = getPartieParSocketId(socket.id);
+      const player = game?.players.find(p => p.id === socket.id);
+      if (!game || !player) {
+        return reply(callback, { ok: false, message: "Cette partie n'est plus disponible." });
+      }
+      reply(callback, game.respondDiscussion(player, payload));
     });
 
     socket.on("disconnect", () => {

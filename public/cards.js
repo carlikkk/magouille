@@ -9,7 +9,7 @@ export const ROLE_DETAILS = Object.freeze({
     color: "#93435e",
     short: "Prends 4 pièces, puis partage tes gains.",
     effect: "Prends 4 pièces au trésor. Chaque adversaire dont la revendication Illusionniste est acceptée et qui reste en vie reçoit 1 pièce de tes gains.",
-    note: "Tu peux aussi te déclarer Illusionniste pour contrer l’aide étrangère.",
+    note: "Toutes les revendications restent contestables ensemble jusqu’à l’accord de la table. Tu peux aussi contrer l’aide étrangère.",
     icon: "mask"
   }),
   "Croque-Mort": Object.freeze({
@@ -19,7 +19,7 @@ export const ROLE_DETAILS = Object.freeze({
     color: "#8a6934",
     short: "Partage l’or d’un joueur éliminé.",
     effect: "À une élimination, les Croque-Morts dont la revendication est acceptée et qui restent en vie se partagent les pièces du défunt. Le reste retourne au trésor.",
-    note: "Interviens lors d’une élimination, sans utiliser ton tour. Tu peux aussi contrer le Maître-Chanteur.",
+    note: "Chaque défunt a son propre héritage et sa nouvelle vague de déclarations. Les déclarations encore ouvertes restent contestables pendant l’héritage. Tu peux aussi contrer le Maître-Chanteur.",
     icon: "shield"
   }),
   "Pape": Object.freeze({
@@ -29,7 +29,7 @@ export const ROLE_DETAILS = Object.freeze({
     color: "#346072",
     short: "Demande 1 pièce à chaque adversaire.",
     effect: "Réclame 1 pièce à chaque adversaire encore en vie qui peut payer. Chacun peut se déclarer Pape pour refuser cette dîme ; son contre peut être contesté.",
-    note: "Les adversaires répondent un à un. Une fois ton rôle prouvé, il ne peut plus être contesté pendant cette dîme.",
+    note: "Les déclarations du Pape et de ses adversaires restent ouvertes ensemble. La dîme n’est prélevée qu’après l’accord de tous. Un Pape initial démasqué annule cette dîme.",
     icon: "cross"
   }),
   "Maître-Chanteur": Object.freeze({
@@ -39,7 +39,7 @@ export const ROLE_DETAILS = Object.freeze({
     color: "#506837",
     short: "Exige 3 pièces ou fais perdre une carte.",
     effect: "Ta cible te paie 3 pièces ou reçoit 3 pièces de ta part et perd une carte. Tu dois posséder au moins 3 pièces pour lancer le chantage.",
-    note: "Le Croque-Mort peut contrer le chantage. Sans 3 pièces, la cible ne peut pas choisir de payer.",
+    note: "Le chantage et son éventuel contre Croque-Mort restent contestables ensemble. Aucun transfert avant l’accord de tous. Sans 3 pièces, la cible ne peut pas choisir de payer.",
     icon: "dagger"
   }),
   "Espion": Object.freeze({
@@ -49,7 +49,7 @@ export const ROLE_DETAILS = Object.freeze({
     color: "#95503a",
     short: "Pioche 1 carte et choisis ta main.",
     effect: "Pioche 1 carte, puis garde autant de cartes que de vies restantes. Tu peux faire un second échange pour 1 pièce, après une nouvelle déclaration d’Espion.",
-    note: "Le premier échange est gratuit. Le second est payé au trésor seulement si la déclaration est acceptée.",
+    note: "Tous les joueurs doivent accepter avant chaque pioche. Après la pioche, cette déclaration est close. Le second échange ouvre une nouvelle contestation et coûte 1 pièce au trésor s’il est validé.",
     icon: "eye"
   })
 });

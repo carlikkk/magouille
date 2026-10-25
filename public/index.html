@@ -9,7 +9,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2314392f'/%3E%3Cpath d='M12 46V18h7l13 18 13-18h7v28h-7V29L32 46 19 29v17z' fill='%23d3b373'/%3E%3C/svg%3E">
   <link rel="preload" href="fonts/cormorant-garamond-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/manrope-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="style.css?v=salon-1">
+  <link rel="stylesheet" href="style.css?v=discussion-1">
 </head>
 <body data-screen="lobby">
   <a class="skip-link" href="#main-content">Aller au jeu</a>
@@ -124,7 +124,10 @@
           </div>
         </div>
         <aside class="game-sidebar" aria-label="Actions et journal">
-          <section id="decision-section" class="decision-section" aria-label="Réaction à l’action" hidden><div id="votes"></div></section>
+          <section id="decision-section" class="decision-section" aria-label="Discussion de la table" hidden>
+            <div id="votes"></div>
+            <div id="discussion-board" hidden></div>
+          </section>
           <section class="actions-section">
             <div class="section-heading"><div><p id="action-subtitle" class="eyebrow">À LA TABLE DU POUVOIR</p><h2 id="action-heading">Votre prochain coup</h2></div><span class="section-star" aria-hidden="true">✦</span></div>
             <div id="actions"></div>
@@ -148,6 +151,6 @@
   </dialog>
   <noscript><div class="noscript">Activez JavaScript pour rejoindre la table de Magouille.</div></noscript>
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="client.js?v=salon-1"></script>
+  <script type="module" src="client.js?v=discussion-1"></script>
 </body>
 </html>

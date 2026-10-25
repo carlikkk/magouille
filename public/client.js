@@ -1,6 +1,6 @@
 // public/client.js
 // Présentation de Magouille. Le serveur reste seul responsable des règles et des choix autorisés.
-import { renderCard, renderCardBack, ROLE_DETAILS, createIcon } from './cards.js?v=salon-1';
+import { renderCard, renderCardBack, ROLE_DETAILS, createIcon } from './cards.js?v=discussion-1';
 
 const socket = io();
 const $ = id => document.getElementById(id);
@@ -14,7 +14,7 @@ const ui = {
   deck: $('nb-pioche'), treasury: $('treasure-count'), announcements: $('annonces'),
   handSummary: $('hand-summary'), ownCards: $('cartes'), ownCoins: $('pieces'),
   privacy: $('privacy-toggle'), actions: $('actions'), actionHeading: $('action-heading'),
-  actionSubtitle: $('action-subtitle'), decisions: $('decision-section'), votes: $('votes'),
+  actionSubtitle: $('action-subtitle'), decisions: $('decision-section'), votes: $('votes'), discussion: $('discussion-board'),
   journal: $('journal'), logCount: $('log-count'), journalPanel: $('journal-panel'),
   toasts: $('toast-region'), banner: $('turn-banner'),
   dialog: $('game-dialog'), dialogContent: $('dialog-content'), dialogClose: $('dialog-close'),
@@ -53,6 +53,9 @@ let pendingLobby = null;
 let pendingAction = null;
 let selectedAction = null;
 let activeDecision = null;
+let activeDiscussion = null;
+let pendingDiscussion = null;
+let lastDiscussionAttempt = null;
 let hasConnected = false;
 let disconnectedFromRoom = false;
 let lastTurnNotified = null;
@@ -236,7 +239,9 @@ function openGuide() {
   const basics = element('div', '', 'guide-basics');
   [
     ['users', 'Quatre autour de la table', 'La partie commence automatiquement à 4 joueurs, avec 2 cartes et 2 pièces chacun.'],
-    ['mask', 'Le bluff est permis', "Tu peux annoncer un rôle que tu n'as pas. Une accusation peut te coûter une influence, ou en coûter une à ton accusateur."],
+    ['mask', 'Le bluff est permis', "Tu peux annoncer un rôle que tu n'as pas. Toute déclaration encore ouverte peut être accusée, même si tu ne revendiques rien."],
+    ['users', 'Toute la table se prononce', 'Ta déclaration ou ton refus de revendiquer est définitif. Chacun accepte la situation avant les effets ; une nouvelle déclaration ou accusation remet les accords à zéro.'],
+    ['shield', 'Une accusation à la fois', 'Une accusation suspend la discussion jusqu’à la perte de carte. Une déclaration prouvée ne peut plus être accusée dans ce contexte ; les autres restent ouvertes.'],
     ['dagger', 'Le poids des pièces', "L'assassinat coûte 7 pièces. Avec 10 pièces ou plus, il devient obligatoire."],
     ['crown', 'La dernière influence', 'Le dernier joueur encore en jeu gagne. Une carte perdue reste visible pour toute la table.']
   ].forEach(([icon, title, text]) => {
@@ -315,10 +320,15 @@ function resetSession() {
   pendingAction = null;
   selectedAction = null;
   activeDecision = null;
+  activeDiscussion = null;
+  pendingDiscussion = null;
+  lastDiscussionAttempt = null;
   lastTurnNotified = null;
   knownPlayers.clear();
   closeDialog();
   ui.votes.replaceChildren();
+  ui.discussion.replaceChildren();
+  ui.discussion.hidden = true;
   ui.decisions.hidden = true;
   ui.announcements.textContent = 'Les meilleures intentions cachent parfois un beau mensonge.';
   ui.actions.replaceChildren();
@@ -704,6 +714,238 @@ function submitAction(option, state, panel, feedback) {
   });
 }
 
+function updateDecisionVisibility() {
+  ui.decisions.hidden = !activeDecision && !activeDiscussion;
+}
+
+function discussionButton(label, onClick, key, className, iconName) {
+  const button = makeButton(label, onClick, className, iconName);
+  button.dataset.discussionFocus = key;
+  return button;
+}
+
+function renderDiscussion(payload, notify = false) {
+  const previous = activeDiscussion?.payload;
+  const focused = ui.discussion.contains(document.activeElement) ? document.activeElement : null;
+  const focusKey = focused?.dataset.discussionFocus;
+  const sameDiscussion = previous?.discussionId === payload.discussionId;
+  if (pendingDiscussion && (
+    pendingDiscussion.discussionId !== payload.discussionId ||
+    pendingDiscussion.revision !== payload.revision ||
+    (pendingDiscussion.type === 'accept' && payload.accepted)
+  )) pendingDiscussion = null;
+
+  const panel = element('div', '', 'discussion-panel');
+  panel.dataset.discussionId = payload.discussionId;
+  panel.dataset.revision = String(payload.revision);
+  panel.dataset.status = payload.status;
+  const paused = payload.status !== 'open';
+  const locked = paused || Boolean(pendingDiscussion) || Boolean(activeDecision);
+  panel.setAttribute('aria-busy', String(payload.status === 'resolving' || Boolean(pendingDiscussion)));
+  const header = element('div', '', 'discussion-heading');
+  const headingCopy = element('div');
+  const heading = element('h3', payload.title || 'La table se prononce', 'discussion-title');
+  heading.tabIndex = -1;
+  heading.dataset.discussionFocus = 'heading';
+  headingCopy.append(element('p', 'Autour de la table', 'decision-eyebrow'), heading);
+  const marker = element('span', paused ? 'En pause' : 'Discussion ouverte', 'discussion-state');
+  marker.appendChild(createIcon(paused ? 'hourglass' : 'users', { size: 14 }));
+  header.append(headingCopy, marker);
+  panel.appendChild(header);
+  if (payload.message) panel.appendChild(element('p', payload.message, 'discussion-message'));
+
+  if (payload.challenge) {
+    const challenge = payload.challenge;
+    const notice = element('div', '', 'discussion-challenge');
+    notice.setAttribute('role', 'status');
+    notice.append(createIcon('cross'), element('p', challenge.challengerName + ' accuse ' + challenge.claimantName + ' sur sa déclaration ' + challenge.role + '.'));
+    notice.appendChild(element('small', 'On règle cette accusation avant de reprendre les échanges.'));
+    panel.appendChild(notice);
+  } else if (paused) {
+    panel.appendChild(element('p', 'La table règle la situation. Les échanges reprennent juste après.', 'discussion-paused'));
+  }
+
+  const contexts = element('div', '', 'discussion-contexts');
+  const discussion = { payload, panel, version: sessionVersion, feedback: null };
+  activeDiscussion = discussion;
+  payload.contexts.forEach(context => {
+    const section = element('section', '', 'discussion-context' + (context.kind === 'estate' ? ' is-estate' : ''));
+    section.dataset.contextId = context.id;
+    section.dataset.contextKind = context.kind;
+    const contextHeader = element('div', '', 'discussion-context-heading');
+    const contextTitle = element('h4', context.title, 'discussion-context-title');
+    contextTitle.id = 'discussion-context-' + context.id;
+    section.setAttribute('aria-labelledby', contextTitle.id);
+    contextHeader.append(createIcon(context.kind === 'estate' ? 'coins' : 'mask', { size: 17 }), contextTitle);
+    section.appendChild(contextHeader);
+    if (context.message) section.appendChild(element('p', context.message, 'discussion-context-message'));
+
+    const claims = element('div', '', 'discussion-claims');
+    context.declarations.forEach(claim => {
+      const row = element('div', '', 'discussion-claim');
+      row.dataset.claimId = claim.id;
+      row.dataset.claimStatus = claim.status;
+      const detail = ROLE_DETAILS[claim.role];
+      const mark = element('span', '', 'discussion-role-mark');
+      mark.style.setProperty('--role-color', detail?.color || '#173d31');
+      mark.appendChild(createIcon(detail?.icon || 'mask', { size: 19 }));
+      const copy = element('div', '', 'discussion-claim-copy');
+      copy.append(element('strong', claim.playerName + (claim.playerId === playerId ? ' · toi' : ''), 'discussion-player-name'),
+        element('span', claim.role, 'discussion-role-name'));
+      const statusText = { open: 'Déclaration ouverte', proved: 'Prouvée pour cette déclaration', disproved: 'Bluff démasqué', cancelled: 'Déclaration annulée' }[claim.status] || 'Déclaration';
+      const badge = element('span', statusText, 'discussion-claim-status');
+      if (claim.status === 'proved') badge.prepend(createIcon('check', { size: 12 }));
+      copy.appendChild(badge);
+      row.append(mark, copy);
+      if (claim.challengeable) {
+        const accuse = discussionButton('Menteur !', () => submitDiscussion(discussion, { type: 'challenge', claimId: claim.id }),
+          'challenge:' + claim.id, 'discussion-accuse', 'cross');
+        accuse.dataset.claimId = claim.id;
+        accuse.dataset.discussionAction = 'challenge';
+        accuse.setAttribute('aria-label', 'Menteur ! Accuser ' + claim.playerName + ' sur ' + claim.role + ' — ' + context.title);
+        accuse.disabled = locked;
+        row.appendChild(accuse);
+      }
+      claims.appendChild(row);
+    });
+    if (claims.childElementCount) section.appendChild(claims);
+
+    const responses = context.responses.filter(response => !context.declarations.some(claim =>
+      claim.playerId === response.playerId && ['open', 'proved'].includes(claim.status)
+    ));
+    if (responses.length) {
+      const choices = element('ul', '', 'discussion-responses');
+      responses.forEach(response => {
+        const item = element('li');
+        item.dataset.responsePlayerId = response.playerId;
+        item.dataset.choice = response.choice;
+        item.append(createIcon('lock', { size: 12 }), element('strong', response.playerName + (response.playerId === playerId ? ' · toi' : '')),
+          element('span', response.label));
+        choices.appendChild(item);
+      });
+      section.appendChild(choices);
+    }
+    if (context.options.length) {
+      const options = element('div', '', 'discussion-options');
+      options.appendChild(element('p', 'Ta réponse · choix définitif', 'discussion-options-label'));
+      context.options.forEach(option => {
+        const button = discussionButton(option.label, () => submitDiscussion(discussion, { type: 'declare', contextId: context.id, choice: option.value }),
+          'declare:' + context.id + ':' + option.value, 'decision-option' + choiceTone(option.value),
+          ['claim', 'block'].includes(option.value) ? 'shield' : 'check');
+        button.dataset.contextId = context.id;
+        button.dataset.choice = option.value;
+        button.dataset.discussionAction = 'declare';
+        button.disabled = locked;
+        options.appendChild(button);
+      });
+      section.appendChild(options);
+    }
+    const awaiting = payload.pendingResponses.filter(response => response.contextId === context.id);
+    if (awaiting.length) section.appendChild(element('p', 'Réponse attendue : ' + awaiting.map(response => response.playerName).join(', ') + '.', 'discussion-awaiting'));
+    contexts.appendChild(section);
+  });
+  panel.appendChild(contexts);
+
+  const approval = element('div', '', 'discussion-approval');
+  const acceptedCount = payload.participants.filter(participant => participant.accepted).length;
+  const summary = element('p', acceptedCount + ' / ' + payload.participants.length + ' ont accepté la situation', 'discussion-approval-summary');
+  summary.setAttribute('role', 'status');
+  approval.appendChild(summary);
+  const participants = element('ul', '', 'discussion-participants');
+  payload.participants.forEach(participant => {
+    const chip = element('li', '', 'discussion-participant' + (participant.accepted ? ' has-accepted' : ''));
+    chip.dataset.playerId = participant.id;
+    chip.dataset.accepted = String(participant.accepted);
+    chip.append(createIcon(participant.accepted ? 'check' : 'hourglass', { size: 13 }),
+      element('span', participant.name + (participant.id === playerId ? ' · toi' : '')));
+    chip.setAttribute('aria-label', participant.name + (participant.accepted ? ' a accepté' : ' doit encore accepter'));
+    participants.appendChild(chip);
+  });
+  approval.appendChild(participants);
+  const alive = payload.participants.some(participant => participant.id === playerId);
+  const accept = discussionButton(payload.accepted ? 'Situation acceptée' : 'J’accepte la situation',
+    () => submitDiscussion(discussion, { type: 'accept' }), 'accept', 'button button-primary discussion-accept', 'check');
+  accept.dataset.discussionAction = 'accept';
+  accept.disabled = locked || !payload.canAccept;
+  accept.setAttribute('aria-pressed', String(Boolean(payload.accepted)));
+  approval.appendChild(accept);
+  const ownChoicesPending = payload.pendingResponses.some(response => response.playerId === playerId);
+  const hint = !alive ? 'Tu peux suivre les échanges depuis les coulisses.'
+    : paused ? 'Les accords seront redemandés après la résolution.'
+      : ownChoicesPending ? 'Choisis d’abord ta réponse dans chaque encadré.'
+        : payload.accepted ? 'Tu peux encore accuser une déclaration ouverte tant que la table n’a pas terminé.'
+          : 'Une nouvelle déclaration ou accusation remet les accords à zéro.';
+  approval.appendChild(element('p', hint, 'discussion-accept-hint'));
+  const feedback = element('p', pendingDiscussion ? 'Ta réponse est transmise…' : '', 'discussion-feedback');
+  feedback.setAttribute('role', 'status');
+  discussion.feedback = feedback;
+  approval.appendChild(feedback);
+  panel.appendChild(approval);
+
+  ui.discussion.replaceChildren(panel);
+  ui.discussion.hidden = false;
+  updateDecisionVisibility();
+  // Une mise à jour des accords ne déplace ni le focus ni le choix de carte privé.
+  if (focusKey && sameDiscussion && !activeDecision) {
+    const replacement = [...panel.querySelectorAll('[data-discussion-focus]')]
+      .find(node => node.dataset.discussionFocus === focusKey && !node.disabled);
+    (replacement || heading).focus({ preventScroll: true });
+  }
+  if (notify && !activeDecision && alive) {
+    playSound('decision');
+    if (window.matchMedia?.('(max-width: 900px)').matches) {
+      requestAnimationFrame(() => {
+        if (activeDiscussion !== discussion || activeDecision || !panel.isConnected) return;
+        const bounds = panel.getBoundingClientRect();
+        if (bounds.top < 20 || bounds.top > window.innerHeight - 120) {
+          const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          panel.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
+        }
+      });
+    }
+  }
+}
+
+function submitDiscussion(discussion, answer) {
+  if (activeDiscussion !== discussion || pendingDiscussion || activeDecision || !socket.connected || discussion.payload.status !== 'open') return;
+  const payload = discussion.payload;
+  const request = { discussionId: payload.discussionId, revision: payload.revision, version: sessionVersion, ...answer };
+  pendingDiscussion = request;
+  lastDiscussionAttempt = request;
+  freezeControls(discussion.panel);
+  discussion.panel.setAttribute('aria-busy', 'true');
+  discussion.feedback.textContent = 'Ta réponse est transmise…';
+  socket.emit('repondreDiscussion', { discussionId: request.discussionId, revision: request.revision, ...answer }, response => {
+    if (request.version !== sessionVersion || activeDiscussion?.payload.discussionId !== request.discussionId) return;
+    if (lastDiscussionAttempt !== request) return;
+    if (pendingDiscussion === request) {
+      pendingDiscussion = null;
+      renderDiscussion(activeDiscussion.payload);
+    }
+    // Une mise à jour peut précéder le refus : afficher celui de la dernière
+    // tentative, sans remplacer la situation courante ni toucher au choix privé.
+    if (!response?.ok) activeDiscussion.feedback.textContent = response?.message || 'Cette réponse a été refusée. Vérifie la situation actuelle.';
+  });
+}
+
+socket.on('discussionUpdate', payload => {
+  if (!roomCode || !playerId) return;
+  const previous = activeDiscussion?.payload;
+  if (previous?.discussionId === payload.discussionId && payload.revision < previous.revision) return;
+  const isNew = previous?.discussionId !== payload.discussionId;
+  const newEstate = !isNew && payload.contexts.some(context => context.kind === 'estate' && !previous.contexts.some(old => old.id === context.id));
+  renderDiscussion(payload, isNew || newEstate);
+});
+socket.on('discussionClosed', ({ discussionId }) => {
+  if (activeDiscussion?.payload.discussionId !== discussionId) return;
+  activeDiscussion = null;
+  pendingDiscussion = null;
+  lastDiscussionAttempt = null;
+  ui.discussion.replaceChildren();
+  ui.discussion.hidden = true;
+  updateDecisionVisibility();
+});
+
 function makeDecision(prompt, eligible = false) {
   const panel = element('div', '', 'decision-panel');
   panel.dataset.promptId = prompt.promptId;
@@ -717,6 +959,7 @@ function makeDecision(prompt, eligible = false) {
   activeDecision = decision;
   ui.votes.replaceChildren(panel);
   ui.decisions.hidden = false;
+  if (activeDiscussion) renderDiscussion(activeDiscussion.payload);
   return decision;
 }
 function choiceTone(value) {
@@ -807,7 +1050,8 @@ socket.on('decisionClosed', ({ promptId }) => {
   if (activeDecision?.promptId !== promptId) return;
   activeDecision = null;
   ui.votes.replaceChildren();
-  ui.decisions.hidden = true;
+  updateDecisionVisibility();
+  if (activeDiscussion) renderDiscussion(activeDiscussion.payload);
 });
 
 function appendLog(line) {
@@ -862,6 +1106,9 @@ socket.on('etatSalle', ({ code, joueurs, maxPlayers }) => {
   pendingAction = null;
   selectedAction = null;
   activeDecision = null;
+  activeDiscussion = null;
+  pendingDiscussion = null;
+  lastDiscussionAttempt = null;
   closeDialog();
   setScreen('waiting');
   updateRoom();
@@ -877,6 +1124,8 @@ socket.on('etatSalle', ({ code, joueurs, maxPlayers }) => {
   ui.actionSubtitle.textContent = 'Tout commence autour de cette table.';
   emptyAction('Invitez les autres joueurs.', 'Chacun rejoint le salon avec le code ' + code + '.', 'users');
   ui.votes.replaceChildren();
+  ui.discussion.replaceChildren();
+  ui.discussion.hidden = true;
   ui.decisions.hidden = true;
   renderWaitingSeats(joueurs);
 });
@@ -933,10 +1182,15 @@ socket.on('gameEnded', ({ winnerId, winnerName, aborted, reason }) => {
   pendingLobby = null;
   selectedAction = null;
   activeDecision = null;
+  activeDiscussion = null;
+  pendingDiscussion = null;
+  lastDiscussionAttempt = null;
   roomCode = null;
   closeDialog();
   currentState = null;
   ui.votes.replaceChildren();
+  ui.discussion.replaceChildren();
+  ui.discussion.hidden = true;
   ui.decisions.hidden = true;
   updateRoom();
   setScreen('ended');
